@@ -1,0 +1,361 @@
+import React, { useState, useMemo } from 'react';
+import { Download, Upload, X } from 'lucide-react';
+
+const JiraGroupedTable = () => {
+  const [expandedStories, setExpandedStories] = useState(new Set());
+  const [data, setData] = useState([]);
+  const [fileName, setFileName] = useState('');
+
+  const parseCSV = (csvText) => {
+    const lines = csvText.split('\n');
+    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
+    
+    // Find column indices
+    const summaryIdx = headers.findIndex(h => h.toLowerCase().includes('summary'));
+    const issueKeyIdx = headers.findIndex(h => h.toLowerCase().includes('issue key'));
+    const issueTypeIdx = headers.findIndex(h => h.toLowerCase().includes('issue type'));
+    const statusIdx = headers.findIndex(h => h.toLowerCase().includes('status') && !h.toLowerCase().includes('category'));
+    const parentKeyIdx = headers.findIndex(h => h.toLowerCase().includes('parent key'));
+    const parentSummaryIdx = headers.findIndex(h => h.toLowerCase().includes('parent summary'));
+    const timeSpentIdx = headers.findIndex(h => h.toLowerCase().includes('time spent'));
+    
+    const parsedData = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+      
+      // Handle CSV with quoted fields
+      const values = [];
+      let currentValue = '';
+      let insideQuotes = false;
+      
+      for (let char of lines[i]) {
+        if (char === '"') {
+          insideQuotes = !insideQuotes;
+        } else if (char === ',' && !insideQuotes) {
+          values.push(currentValue.trim().replace(/^"|"$/g, ''));
+          currentValue = '';
+        } else {
+          currentValue += char;
+        }
+      }
+      values.push(currentValue.trim().replace(/^"|"$/g, ''));
+      
+      if (values.length > 1) {
+        // Convert time spent to seconds (assuming it's in format like "32400" or "9h")
+        let timeSpent = 0;
+        if (timeSpentIdx !== -1 && values[timeSpentIdx]) {
+          const timeStr = values[timeSpentIdx];
+          if (timeStr.includes('h')) {
+            timeSpent = parseFloat(timeStr) * 3600;
+          } else {
+            timeSpent = parseInt(timeStr) || 0;
+          }
+        }
+        
+        parsedData.push({
+          summary: values[summaryIdx] || '',
+          issueKey: values[issueKeyIdx] || '',
+          issueType: values[issueTypeIdx] || '',
+          status: values[statusIdx] || '',
+          parentKey: values[parentKeyIdx] || '',
+          parentSummary: values[parentSummaryIdx] || '',
+          timeSpent: timeSpent
+        });
+      }
+    }
+    
+    return parsedData;
+  };
+
+  const handleFileUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    setFileName(file.name);
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const csvText = e.target.result;
+        const parsedData = parseCSV(csvText);
+        setData(parsedData);
+      } catch (error) {
+        alert('Error parsing CSV file. Please check the format.');
+        console.error(error);
+      }
+    };
+    
+    reader.readAsText(file);
+  };
+
+  const clearData = () => {
+    setData([]);
+    setFileName('');
+    setExpandedStories(new Set());
+  };
+
+  const groupedData = useMemo(() => {
+    if (data.length === 0) return [];
+    
+    const groups = {};
+    data.forEach(item => {
+      const parentKey = item.parentKey || 'No Parent';
+      const parentSummary = item.parentSummary || 'No Parent Story';
+      const status = item.status;
+      
+      if (!groups[parentKey]) {
+        groups[parentKey] = {
+          parentKey,
+          parentSummary,
+          statuses: {}
+        };
+      }
+      
+      if (!groups[parentKey].statuses[status]) {
+        groups[parentKey].statuses[status] = [];
+      }
+      
+      groups[parentKey].statuses[status].push(item);
+    });
+    
+    return Object.values(groups).sort((a, b) => 
+      a.parentSummary.localeCompare(b.parentSummary)
+    );
+  }, [data]);
+
+  const toggleStory = (parentKey) => {
+    const newExpanded = new Set(expandedStories);
+    if (newExpanded.has(parentKey)) {
+      newExpanded.delete(parentKey);
+    } else {
+      newExpanded.add(parentKey);
+    }
+    setExpandedStories(newExpanded);
+  };
+
+  const formatHours = (seconds) => {
+    if (!seconds) return '0h';
+    return `${(seconds / 3600).toFixed(1)}h`;
+  };
+
+  const getStatusColor = (status) => {
+    const colors = {
+      'Done': 'bg-green-100 text-green-800',
+      'Under Review': 'bg-blue-100 text-blue-800',
+      'In Progress': 'bg-yellow-100 text-yellow-800',
+      'Under Draft': 'bg-gray-100 text-gray-800',
+      'Review': 'bg-purple-100 text-purple-800',
+      'blocked': 'bg-red-100 text-red-800',
+      'To Do': 'bg-slate-100 text-slate-800',
+      'Ready For Development': 'bg-indigo-100 text-indigo-800',
+      'Ready For Refinement': 'bg-pink-100 text-pink-800',
+      'Core Workshop': 'bg-orange-100 text-orange-800'
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
+  const exportToExcel = () => {
+    if (data.length === 0) {
+      alert('No data to export. Please import a CSV file first.');
+      return;
+    }
+    
+    const rows = [
+      ['Parent User Story', 'Parent Key', 'Status', 'Task Summary', 'Issue Key', 'Issue Type', 'Time Spent (hours)']
+    ];
+    
+    groupedData.forEach(group => {
+      Object.entries(group.statuses).forEach(([status, tasks]) => {
+        tasks.forEach((task, index) => {
+          rows.push([
+            index === 0 && Object.keys(group.statuses)[0] === status ? group.parentSummary : '',
+            index === 0 && Object.keys(group.statuses)[0] === status ? group.parentKey : '',
+            status,
+            task.summary,
+            task.issueKey,
+            task.issueType,
+            (task.timeSpent / 3600).toFixed(1)
+          ]);
+        });
+      });
+    });
+
+    const csvContent = rows.map(row => 
+      row.map(cell => {
+        const cellStr = String(cell).replace(/"/g, '""');
+        return `"${cellStr}"`;
+      }).join(',')
+    ).join('\n');
+    
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'jira_grouped_by_user_story.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6">
+      <div className="w-full max-w-7xl mx-auto">
+        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+          <div className="flex justify-between items-center mb-6">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-800 mb-2">JIRA Tasks Viewer</h1>
+              <p className="text-gray-600">Import your JIRA CSV export to visualize tasks grouped by user story and status</p>
+            </div>
+          </div>
+
+          <div className="flex gap-4 flex-wrap">
+            <label className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer">
+              <Upload size={20} />
+              Import CSV File
+              <input
+                type="file"
+                accept=".csv"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+            </label>
+
+            {data.length > 0 && (
+              <>
+                <button
+                  onClick={exportToExcel}
+                  className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <Download size={20} />
+                  Export to Excel
+                </button>
+
+                <button
+                  onClick={clearData}
+                  className="flex items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  <X size={20} />
+                  Clear Data
+                </button>
+              </>
+            )}
+          </div>
+
+          {fileName && (
+            <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <span className="font-semibold">Loaded file:</span> {fileName} 
+                <span className="ml-4 text-blue-600">({data.length} tasks found)</span>
+              </p>
+            </div>
+          )}
+        </div>
+
+        {data.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
+            <Upload size={64} className="mx-auto text-gray-400 mb-4" />
+            <h2 className="text-2xl font-semibold text-gray-700 mb-2">No Data Loaded</h2>
+            <p className="text-gray-500 mb-6">Upload a JIRA CSV export file to get started</p>
+            <div className="text-left max-w-2xl mx-auto bg-gray-50 p-6 rounded-lg">
+              <p className="font-semibold text-gray-700 mb-2">Expected CSV columns:</p>
+              <ul className="text-sm text-gray-600 space-y-1">
+                <li>• Summary</li>
+                <li>• Issue key</li>
+                <li>• Issue Type</li>
+                <li>• Status</li>
+                <li>• Parent key</li>
+                <li>• Parent summary</li>
+                <li>• Time Spent (optional)</li>
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {groupedData.map(group => {
+              const isExpanded = expandedStories.has(group.parentKey);
+              const totalTasks = Object.values(group.statuses).reduce((acc, tasks) => acc + tasks.length, 0);
+              const totalHours = Object.values(group.statuses)
+                .flat()
+                .reduce((acc, task) => acc + task.timeSpent, 0);
+
+              return (
+                <div key={group.parentKey} className="bg-white border border-gray-200 rounded-lg overflow-hidden shadow-md hover:shadow-lg transition-shadow">
+                  <div
+                    className="bg-gradient-to-r from-blue-50 to-indigo-50 p-4 cursor-pointer hover:bg-indigo-100 transition-colors"
+                    onClick={() => toggleStory(group.parentKey)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <span className="text-2xl">{isExpanded ? '▼' : '▶'}</span>
+                          <div>
+                            <h2 className="text-lg font-semibold text-gray-800">{group.parentSummary}</h2>
+                            <p className="text-sm text-gray-600">{group.parentKey}</p>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-6 text-sm">
+                        <div className="text-center">
+                          <div className="text-gray-600">Tasks</div>
+                          <div className="font-bold text-xl text-blue-600">{totalTasks}</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-gray-600">Time Spent</div>
+                          <div className="font-bold text-xl text-indigo-600">{formatHours(totalHours)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="p-4 bg-white">
+                      {Object.entries(group.statuses)
+                        .sort((a, b) => a[0].localeCompare(b[0]))
+                        .map(([status, tasks]) => (
+                          <div key={status} className="mb-6 last:mb-0">
+                            <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold mb-3 ${getStatusColor(status)}`}>
+                              {status} ({tasks.length})
+                            </div>
+                            <div className="overflow-x-auto">
+                              <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                  <tr>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task Summary</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Issue Key</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Spent</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                  {tasks.map(task => (
+                                    <tr key={task.issueKey} className="hover:bg-gray-50">
+                                      <td className="px-4 py-3 text-sm text-gray-900">{task.summary}</td>
+                                      <td className="px-4 py-3 text-sm">
+                                        <span className="font-mono text-blue-600">{task.issueKey}</span>
+                                      </td>
+                                      <td className="px-4 py-3 text-sm">
+                                        <span className="px-2 py-1 bg-gray-100 rounded text-gray-700">{task.issueType}</span>
+                                      </td>
+                                      <td className="px-4 py-3 text-sm text-gray-900">{formatHours(task.timeSpent)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default JiraGroupedTable;
