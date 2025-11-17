@@ -361,10 +361,12 @@ const JiraGroupedTable = () => {
   );
 };
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
-  <React.StrictMode>
-    <JiraGroupedTable />
-  </React.StrictMode>
-);
+window.onload = () => {
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(
+    <React.StrictMode>
+      <JiraGroupedTable />
+    </React.StrictMode>
+  );
+};
 </script>
