@@ -358,4 +358,4 @@ const JiraGroupedTable = () => {
   );
 };
 
-export default JiraGroupedTable;
+window.JiraGroupedTable = JiraGroupedTable;
